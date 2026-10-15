@@ -21,12 +21,13 @@
     .right { display:flex; align-items:center; gap:12px; }
     .refresh-note { font-size:13px; color:#666; margin-top:8px; }
     .session-info { font-size:13px; color:#333; margin-top:8px; }
+    .uploads-result { font-size:13px; color:#0a0; margin-top:8px; }
   </style>
 </head>
 <body>
   <header>
     <h1>music suggestions</h1>
-    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带网易云搜索链接）。每次刷新后评分会重新开始。要在终端查询评分数据，请在仓库根目录启动后端（见 README）。</p>
+    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带网易云搜索链接）。每次刷新后评分会重新开始。要在终端查询评分数据，请在仓库根目录启�[...]</p>
   </header>
 
   <div class="card">
@@ -42,6 +43,7 @@
 
     <div id="result" style="margin-top:16px;"></div>
     <div id="session" class="session-info"></div>
+    <div id="uploads" class="uploads-result"></div>
   </div>
 
   <footer>
@@ -190,9 +192,13 @@
     // local fallback storage per session in-memory (not persisted across reloads)
     const fallbackSessions = {};
 
+    // ratingsMap holds the current chosen rating for each song (not yet uploaded)
+    let ratingsMap = {};
+
     function renderPicks(picks, sourceList, sessionId) {
       currentPicks = picks.slice();
       refreshUsed = false;
+      ratingsMap = {}; // reset
       const resultDiv = document.getElementById('result');
       resultDiv.innerHTML = '';
 
@@ -232,7 +238,7 @@
           star.textContent = '★';
           star.dataset.value = i;
           star.style.userSelect = 'none';
-          star.addEventListener('click', async () => {
+          star.addEventListener('click', () => {
             const r = parseInt(star.dataset.value, 10);
             // Update UI immediately
             const starElements = stars.querySelectorAll('.star');
@@ -242,16 +248,14 @@
             });
             label.textContent = `${r} / 5`;
 
-            // send to server if available, else keep in fallbackSessions
-            if (currentSessionId && !currentSessionId.startsWith('local-')) {
-              await postRatingToServer(currentSessionId, { title: song.title, artist: song.artist }, r);
-            } else {
-              // fallback
-              if (!currentSessionId) currentSessionId = 'local-' + Date.now();
-              if (!fallbackSessions[currentSessionId]) fallbackSessions[currentSessionId] = { picks: picks.slice(), ratings: {} };
-              fallbackSessions[currentSessionId].ratings[songId] = r;
-              document.getElementById('session').textContent = `Session: ${currentSessionId} (local)`;
-            }
+            // Save to ratingsMap but do NOT send immediately. We'll upload all three separately when user clicks 上传全部评分.
+            ratingsMap[songId] = r;
+
+            // update fallbackSessions in-memory so user sees local state immediately
+            if (!currentSessionId) currentSessionId = 'local-' + Date.now();
+            if (!fallbackSessions[currentSessionId]) fallbackSessions[currentSessionId] = { picks: picks.slice(), ratings: {} };
+            fallbackSessions[currentSessionId].ratings[songId] = r;
+            document.getElementById('session').textContent = `Session: ${currentSessionId} (local)`;
           });
           stars.appendChild(star);
         }
@@ -302,11 +306,62 @@
         renderPicks(newPicks, sourceList, currentSessionId);
       });
 
+      // 上传全部评分按钮：将当前三首歌的评分分别 POST 到 /rate（每首一条请求）
+      const uploadAllBtn = document.createElement('button');
+      uploadAllBtn.textContent = '上传全部评分（分别入库）';
+      uploadAllBtn.addEventListener('click', async () => {
+        // ensure all three have ratings
+        const missing = currentPicks.filter(s => !ratingsMap[getSongId(s)]);
+        if (missing.length > 0) {
+          alert('请给三首歌都评分后再上传（缺少 ' + missing.length + ' 首）。');
+          return;
+        }
+
+        // ensure we have a session id (server or local)
+        if (!currentSessionId) {
+          // try to create server session first
+          const mbti = document.getElementById('mbti').value.trim();
+          const newSessionId = await createSessionOnServer(mbti, currentPicks);
+          if (newSessionId) {
+            currentSessionId = newSessionId;
+            document.getElementById('session').textContent = `Session: ${currentSessionId}`;
+          } else {
+            currentSessionId = 'local-' + Date.now();
+            document.getElementById('session').textContent = `Session: ${currentSessionId} (local)`;
+            fallbackSessions[currentSessionId] = { picks: currentPicks.slice(), ratings: {} };
+          }
+        }
+
+        const uploadsDiv = document.getElementById('uploads');
+        uploadsDiv.textContent = '正在上传...';
+
+        if (currentSessionId && !currentSessionId.startsWith('local-')) {
+          // server: send each rating as a separate request
+          const results = await Promise.all(currentPicks.map(async (song) => {
+            const r = ratingsMap[getSongId(song)];
+            const ok = await postRatingToServer(currentSessionId, { title: song.title, artist: song.artist }, r);
+            return { song, rating: r, ok };
+          }));
+
+          const successCount = results.filter(r => r.ok).length;
+          uploadsDiv.textContent = `已上传 ${successCount}/${results.length} 条（分别记录在服务器 /uploads）`;
+        } else {
+          // local fallback: record each individually in fallbackSessions
+          if (!fallbackSessions[currentSessionId]) fallbackSessions[currentSessionId] = { picks: currentPicks.slice(), ratings: {} };
+          currentPicks.forEach(song => {
+            const songId = getSongId(song);
+            fallbackSessions[currentSessionId].ratings[songId] = ratingsMap[songId];
+          });
+          uploadsDiv.textContent = `本地已记录 ${currentPicks.length} 条评分（session: ${currentSessionId}）`;
+        }
+      });
+
       const note = document.createElement('div');
       note.className = 'refresh-note';
-      note.textContent = '提示：每次刷新会开启新的评分会话（session），评分会重新开始。若已在运行后端，评分会被保存到服务器，终端可查询。';
+      note.textContent = '提示：每次刷新会开启新的评分会话（session），评分会重新开始。点击「上传全部评分（分别入库）」会把三首歌的评分分别发送到后端，每次为一条记录。';
 
       ctrl.appendChild(refreshBtn);
+      ctrl.appendChild(uploadAllBtn);
       resultDiv.appendChild(ctrl);
       resultDiv.appendChild(note);
 
