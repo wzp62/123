@@ -1,4 +1,4 @@
-// Simple Express server to store sessions and ratings in a local JSON file
+// Simple Express server to store sessions, ratings and uploads in a local JSON file
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -6,16 +6,26 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 const DB_FILE = path.join(__dirname, 'ratings.db.json');
+
 function loadDb() {
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // ensure expected shape
+    if (!parsed.sessions || typeof parsed.sessions !== 'object') parsed.sessions = {};
+    if (!Array.isArray(parsed.uploads)) parsed.uploads = [];
+    return parsed;
   } catch (e) {
-    return { sessions: {} };
+    // If file missing or invalid, return fresh structure
+    return { sessions: {}, uploads: [] };
   }
 }
+
 function saveDb(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+  // atomic write: write to tmp then rename
+  const tmp = DB_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8');
+  fs.renameSync(tmp, DB_FILE);
 }
 
 const app = express();
@@ -40,14 +50,26 @@ app.post('/session', (req, res) => {
 // record a rating for a song under a session
 app.post('/rate', (req, res) => {
   const { sessionId, song, rating } = req.body || {};
-  if (!sessionId || !song || !rating) {
+  // allow rating 0 if needed; check for null/undefined
+  if (!sessionId || !song || rating == null) {
     return res.status(400).json({ error: 'sessionId, song and rating are required' });
   }
   const db = loadDb();
   if (!db.sessions[sessionId]) {
     return res.status(404).json({ error: 'session not found' });
   }
-  db.sessions[sessionId].ratings.push({ song, rating, ts: new Date().toISOString() });
+  const entry = { song, rating, ts: new Date().toISOString() };
+  db.sessions[sessionId].ratings.push(entry);
+
+  // record every upload as its own entry for easy retrieval and audit
+  if (!Array.isArray(db.uploads)) db.uploads = [];
+  db.uploads.push({
+    sessionId,
+    song,
+    rating,
+    ts: entry.ts
+  });
+
   saveDb(db);
   res.json({ ok: true });
 });
@@ -62,6 +84,17 @@ app.get('/ratings', (req, res) => {
     return res.json({ sessionId, ...s });
   }
   res.json(db);
+});
+
+// NEW: list all uploads (each /rate call). Optional ?sessionId=...
+app.get('/uploads', (req, res) => {
+  const { sessionId } = req.query;
+  const db = loadDb();
+  const uploads = Array.isArray(db.uploads) ? db.uploads : [];
+  if (sessionId) {
+    return res.json(uploads.filter(u => u.sessionId === sessionId));
+  }
+  res.json(uploads);
 });
 
 const PORT = process.env.PORT || 3000;
