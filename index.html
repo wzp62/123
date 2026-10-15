@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MBTI 歌曲推荐</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width:720px; margin:40px auto; padding:0 16px; color:#222; }
+    header { text-align:center; margin-bottom:24px; }
+    select, button { padding:8px 12px; font-size:16px; }
+    .card { border:1px solid #e0e0e0; border-radius:8px; padding:16px; box-shadow:0 2px 6px rgba(0,0,0,0.03); margin-top:16px; }
+    ul { padding-left:20px; }
+    .song { margin:8px 0; display:flex; justify-content:space-between; align-items:center; }
+    .song a { color:#0366d6; text-decoration:none; font-size:14px; }
+    footer { margin-top:32px; font-size:13px; color:#666; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>根据 MBTI 推荐歌曲</h1>
+    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带 YouTube 搜索链接）</p>
+  </header>
+
+  <div class="card">
+    <label for="mbti">选择 MBTI：</label>
+    <select id="mbti">
+      <option value="">-- 请选择 --</option>
+      <option>ISTJ</option><option>ISFJ</option><option>INFJ</option><option>INTJ</option>
+      <option>ISTP</option><option>ISFP</option><option>INFP</option><option>INTP</option>
+      <option>ESTP</option><option>ESFP</option><option>ENFP</option><option>ENTP</option>
+      <option>ESTJ</option><option>ESFJ</option><option>ENFJ</option><option>ENTJ</option>
+    </select>
+    <button id="recBtn">推荐歌曲</button>
+
+    <div id="result" style="margin-top:16px;"></div>
+  </div>
+
+  <footer>
+    这是一个示例项目，歌单可自由更改或扩展为从第三方服务拉取。
+  </footer>
+
+  <script>
+    // 简单的 MBTI -> 歌曲 数据，每项包含 title 和 artist
+    const mbtiSongs = {
+      ISTJ: [
+        {title:"Fix You", artist:"Coldplay"},
+        {title:"The Scientist", artist:"Coldplay"},
+        {title:"Vienna", artist:"Billy Joel"}
+      ],
+      ISFJ: [
+        {title:"Stand By Me", artist:"Ben E. King"},
+        {title:"Somewhere Only We Know", artist:"Keane"},
+        {title:"Landslide", artist:"Fleetwood Mac"}
+      ],
+      INFJ: [
+        {title:"Breathe Me", artist:"Sia"},
+        {title:"Holocene", artist:"Bon Iver"},
+        {title:"Everybody's Changing", artist:"Keane"}
+      ],
+      INTJ: [
+        {title:"Space Oddity", artist:"David Bowie"},
+        {title:"Mad World", artist:"Gary Jules"},
+        {title:"Time", artist:"Hans Zimmer"}
+      ],
+      ISTP: [
+        {title:"Seven Nation Army", artist:"The White Stripes"},
+        {title:"Believer", artist:"Imagine Dragons"},
+        {title:"Kryptonite", artist:"3 Doors Down"}
+      ],
+      ISFP: [
+        {title:"Skinny Love", artist:"Bon Iver"},
+        {title:"River", artist:"Leon Bridges"},
+        {title:"Yellow", artist:"Coldplay"}
+      ],
+      INFP: [
+        {title:"I Will Follow You Into The Dark", artist:"Death Cab for Cutie"},
+        {title:"Northern Wind", artist:"City and Colour"},
+        {title:"Hoppípolla", artist:"Sigur Rós"}
+      ],
+      INTP: [
+        {title:"Clocks", artist:"Coldplay"},
+        {title:"The Less I Know The Better", artist:"Tame Impala"},
+        {title:"Weird Fishes/Arpeggi", artist:"Radiohead"}
+      ],
+      ESTP: [
+        {title:"Uptown Funk", artist:"Mark Ronson ft. Bruno Mars"},
+        {title:"Can't Hold Us", artist:"Macklemore & Ryan Lewis"},
+        {title:"Don't Stop Me Now", artist:"Queen"}
+      ],
+      ESFP: [
+        {title:"Shake It Off", artist:"Taylor Swift"},
+        {title:"Happy", artist:"Pharrell Williams"},
+        {title:"Dancing Queen", artist:"ABBA"}
+      ],
+      ENFP: [
+        {title:"Dog Days Are Over", artist:"Florence + The Machine"},
+        {title:"Send Me On My Way", artist:"Rusted Root"},
+        {title:"Wake Up", artist:"Arcade Fire"}
+      ],
+      ENTP: [
+        {title:"Pompeii", artist:"Bastille"},
+        {title:"Radioactive", artist:"Imagine Dragons"},
+        {title:"Mr. Brightside", artist:"The Killers"}
+      ],
+      ESTJ: [
+        {title:"Eye of the Tiger", artist:"Survivor"},
+        {title:"Stronger", artist:"Kanye West"},
+        {title:"Back in Black", artist:"AC/DC"}
+      ],
+      ESFJ: [
+        {title:"Count On Me", artist:"Bruno Mars"},
+        {title:"A Thousand Years", artist:"Christina Perri"},
+        {title:"Good Riddance (Time of Your Life)", artist:"Green Day"}
+      ],
+      ENFJ: [
+        {title:"Chasing Cars", artist:"Snow Patrol"},
+        {title:"Human", artist:"Rag'n'Bone Man"},
+        {title:"Heroes", artist:"David Bowie"}
+      ],
+      ENTJ: [
+        {title:"Run This Town", artist:"Jay-Z ft. Rihanna & Kanye West"},
+        {title:"Lose Yourself", artist:"Eminem"},
+        {title:"Power", artist:"Kanye West"}
+      ]
+    };
+
+    // 随机从数组中选 n 个（不重复）
+    function sample(arr, n) {
+      const copy = arr.slice();
+      const res = [];
+      for (let i = 0; i < n && copy.length > 0; i++) {
+        const idx = Math.floor(Math.random() * copy.length);
+        res.push(copy.splice(idx,1)[0]);
+      }
+      return res;
+    }
+
+    function youtubeSearchUrl(title, artist) {
+      const q = encodeURIComponent(title + " " + artist);
+      return `https://www.youtube.com/results?search_query=${q}`;
+    }
+
+    document.getElementById('recBtn').addEventListener('click', () => {
+      const mbti = document.getElementById('mbti').value.trim();
+      const resultDiv = document.getElementById('result');
+      resultDiv.innerHTML = '';
+      if (!mbti) {
+        resultDiv.innerHTML = '<p style="color:#d00;">请先选择一个 MBTI 类型。</p>';
+        return;
+      }
+      const list = mbtiSongs[mbti];
+      if (!list) {
+        resultDiv.innerHTML = '<p style="color:#d00;">抱歉，暂时没有该类型的歌单。</p>';
+        return;
+      }
+      const picks = sample(list, 3); // 推荐 3 首
+      const ul = document.createElement('ul');
+      picks.forEach(song => {
+        const li = document.createElement('li');
+        li.className = 'song';
+        const left = document.createElement('div');
+        left.innerHTML = `<strong>${song.title}</strong> — ${song.artist}`;
+        const right = document.createElement('div');
+        const a = document.createElement('a');
+        a.href = youtubeSearchUrl(song.title, song.artist);
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = '在 YouTube 搜索';
+        right.appendChild(a);
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+      });
+      resultDiv.appendChild(ul);
+    });
+  </script>
+</body>
+</html>
