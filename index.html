@@ -135,9 +135,11 @@
       return res;
     }
 
-    function youtubeSearchUrl(title, artist) {
+    // 生成网易云音乐的搜索链接（在 Web 端）
+    function neteaseSearchUrl(title, artist) {
       const q = encodeURIComponent(title + " " + artist);
-      return `https://www.youtube.com/results?search_query=${q}`;
+      // 使用网易云音乐的 web 搜索页面
+      return `https://music.163.com/#/search/m/?s=${q}&type=1`;
     }
 
     document.getElementById('recBtn').addEventListener('click', () => {
@@ -162,10 +164,10 @@
         left.innerHTML = `<strong>${song.title}</strong> — ${song.artist}`;
         const right = document.createElement('div');
         const a = document.createElement('a');
-        a.href = youtubeSearchUrl(song.title, song.artist);
+        a.href = neteaseSearchUrl(song.title, song.artist);
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
-        a.textContent = '在 YouTube 搜索';
+        a.textContent = '在网易云音乐搜索';
         right.appendChild(a);
         li.appendChild(left);
         li.appendChild(right);
