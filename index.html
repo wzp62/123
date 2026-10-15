@@ -13,12 +13,19 @@
     .song { margin:8px 0; display:flex; justify-content:space-between; align-items:center; }
     .song a { color:#0366d6; text-decoration:none; font-size:14px; }
     footer { margin-top:32px; font-size:13px; color:#666; text-align:center; }
+    .controls { display:flex; gap:8px; align-items:center; }
+    .stars { display:inline-block; }
+    .star { color:#ccc; font-size:18px; cursor:pointer; padding:0 2px; }
+    .star.filled { color:#f5a623; }
+    .rating-label { font-size:13px; color:#555; margin-left:8px; }
+    .right { display:flex; align-items:center; gap:12px; }
+    .refresh-note { font-size:13px; color:#666; margin-top:8px; }
   </style>
 </head>
 <body>
   <header>
     <h1>根据 MBTI 推荐歌曲</h1>
-    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带 YouTube 搜索链接）</p>
+    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带网易云搜索链接）。可以刷新一次替换三首并为每首分别评分，评分保存在浏览器的 localStorage 中。</p>
   </header>
 
   <div class="card">
@@ -40,7 +47,6 @@
   </footer>
 
   <script>
-    // 简单的 MBTI -> 歌曲 数据，每项包含 title 和 artist
     const mbtiSongs = {
       ISTJ: [
         {title:"Fix You", artist:"Coldplay"},
@@ -124,22 +130,143 @@
       ]
     };
 
-    // 随机从数组中选 n 个（不重复）
     function sample(arr, n) {
       const copy = arr.slice();
       const res = [];
       for (let i = 0; i < n && copy.length > 0; i++) {
         const idx = Math.floor(Math.random() * copy.length);
-        res.push(copy.splice(idx,1)[0]);
+        res.push(copy.splice(idx, 1)[0]);
       }
       return res;
     }
 
-    // 生成网易云音乐的搜索链接（在 Web 端）
     function neteaseSearchUrl(title, artist) {
       const q = encodeURIComponent(title + " " + artist);
-      // 使用网易云音乐的 web 搜索页面
       return `https://music.163.com/#/search/m/?s=${q}&type=1`;
+    }
+
+    function ratingsStorage() {
+      try {
+        const s = localStorage.getItem('songRatings');
+        return s ? JSON.parse(s) : {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function saveRatings(obj) {
+      try {
+        localStorage.setItem('songRatings', JSON.stringify(obj));
+      } catch (e) {}
+    }
+
+    function getSongId(song) {
+      return encodeURIComponent(song.title + '|' + song.artist);
+    }
+
+    let currentPicks = [];
+    let refreshUsed = false;
+
+    function renderPicks(picks, sourceList) {
+      currentPicks = picks.slice();
+      refreshUsed = false;
+      const resultDiv = document.getElementById('result');
+      resultDiv.innerHTML = '';
+
+      const ul = document.createElement('ul');
+      const stored = ratingsStorage();
+
+      picks.forEach(song => {
+        const li = document.createElement('li');
+        li.className = 'song';
+
+        const left = document.createElement('div');
+        left.innerHTML = `<strong>${song.title}</strong> — ${song.artist}`;
+
+        const right = document.createElement('div');
+        right.className = 'right';
+
+        const a = document.createElement('a');
+        a.href = neteaseSearchUrl(song.title, song.artist);
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = '在网易云音乐搜索';
+
+        const stars = document.createElement('span');
+        stars.className = 'stars';
+        const songId = getSongId(song);
+        const currentRating = stored[songId] || 0;
+
+        for (let i = 1; i <= 5; i++) {
+          const star = document.createElement('span');
+          star.className = 'star' + (i <= currentRating ? ' filled' : '');
+          star.textContent = '★';
+          star.dataset.value = i;
+          star.style.userSelect = 'none';
+          star.addEventListener('click', () => {
+            const r = parseInt(star.dataset.value, 10);
+            const all = ratingsStorage();
+            all[songId] = r;
+            saveRatings(all);
+
+            const starElements = stars.querySelectorAll('.star');
+            starElements.forEach(el => {
+              const v = parseInt(el.dataset.value, 10);
+              if (v <= r) el.classList.add('filled'); else el.classList.remove('filled');
+            });
+
+            label.textContent = `${r} / 5`;
+          });
+          stars.appendChild(star);
+        }
+
+        const label = document.createElement('span');
+        label.className = 'rating-label';
+        label.textContent = currentRating ? `${currentRating} / 5` : '未评分';
+
+        right.appendChild(a);
+        right.appendChild(stars);
+        right.appendChild(label);
+
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+      });
+
+      resultDiv.appendChild(ul);
+
+      const ctrl = document.createElement('div');
+      ctrl.className = 'controls';
+
+      const refreshBtn = document.createElement('button');
+      refreshBtn.textContent = '刷新（换三首）';
+      refreshBtn.addEventListener('click', () => {
+        if (refreshUsed) {
+          return;
+        }
+        refreshUsed = true;
+        refreshBtn.disabled = true;
+
+        const currentIds = new Set(currentPicks.map(getSongId));
+        let pool = sourceList.filter(song => !currentIds.has(getSongId(song)));
+
+        let newPicks;
+        if (pool.length >= 3) {
+          newPicks = sample(pool, 3);
+        } else {
+          newPicks = sample(sourceList, 3);
+        }
+
+        renderPicks(newPicks, sourceList);
+      });
+
+      const note = document.createElement('div');
+      note.className = 'refresh-note';
+      note.textContent = '提示：每次推荐后可点击一次“刷新（换三首）”，且每首歌可单独评分。评分会保存在浏览器本地。';
+
+      ctrl.appendChild(refreshBtn);
+      resultDiv.appendChild(ctrl);
+      resultDiv.appendChild(note);
     }
 
     document.getElementById('recBtn').addEventListener('click', () => {
@@ -155,25 +282,8 @@
         resultDiv.innerHTML = '<p style="color:#d00;">抱歉，暂时没有该类型的歌单。</p>';
         return;
       }
-      const picks = sample(list, 3); // 推荐 3 首
-      const ul = document.createElement('ul');
-      picks.forEach(song => {
-        const li = document.createElement('li');
-        li.className = 'song';
-        const left = document.createElement('div');
-        left.innerHTML = `<strong>${song.title}</strong> — ${song.artist}`;
-        const right = document.createElement('div');
-        const a = document.createElement('a');
-        a.href = neteaseSearchUrl(song.title, song.artist);
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        a.textContent = '在网易云音乐搜索';
-        right.appendChild(a);
-        li.appendChild(left);
-        li.appendChild(right);
-        ul.appendChild(li);
-      });
-      resultDiv.appendChild(ul);
+      const picks = sample(list, 3);
+      renderPicks(picks, list);
     });
   </script>
 </body>
