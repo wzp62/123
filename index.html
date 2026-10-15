@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MBTI 歌曲推荐</title>
+  <title>music suggestions</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width:720px; margin:40px auto; padding:0 16px; color:#222; }
     header { text-align:center; margin-bottom:24px; }
@@ -20,12 +20,13 @@
     .rating-label { font-size:13px; color:#555; margin-left:8px; }
     .right { display:flex; align-items:center; gap:12px; }
     .refresh-note { font-size:13px; color:#666; margin-top:8px; }
+    .session-info { font-size:13px; color:#333; margin-top:8px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>根据 MBTI 推荐歌曲</h1>
-    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带网易云搜索链接）。可以刷新一次替换三首并为每首分别评分，评分保存在浏览器的 localStorage 中。</p>
+    <h1>music suggestions</h1>
+    <p>选择你的 MBTI，获得三首适合风格的推荐歌曲（带网易云搜索链接）。每次刷新后评分会重新开始。要在终端查询评分数据，请在仓库根目录启动后端（见 README）。</p>
   </header>
 
   <div class="card">
@@ -40,6 +41,7 @@
     <button id="recBtn">推荐歌曲</button>
 
     <div id="result" style="margin-top:16px;"></div>
+    <div id="session" class="session-info"></div>
   </div>
 
   <footer>
@@ -47,6 +49,9 @@
   </footer>
 
   <script>
+    // 后端 API 基地址（默认本地）
+    const API_BASE = 'http://localhost:3000';
+
     const mbtiSongs = {
       ISTJ: [
         {title:"Fix You", artist:"Coldplay"},
@@ -145,36 +150,60 @@
       return `https://music.163.com/#/search/m/?s=${q}&type=1`;
     }
 
-    function ratingsStorage() {
-      try {
-        const s = localStorage.getItem('songRatings');
-        return s ? JSON.parse(s) : {};
-      } catch (e) {
-        return {};
-      }
-    }
-
-    function saveRatings(obj) {
-      try {
-        localStorage.setItem('songRatings', JSON.stringify(obj));
-      } catch (e) {}
-    }
-
     function getSongId(song) {
       return encodeURIComponent(song.title + '|' + song.artist);
     }
 
+    // Server-backed flow: create session and post ratings. If server unreachable, fall back to localStorage.
+    let currentSessionId = null;
     let currentPicks = [];
     let refreshUsed = false;
 
-    function renderPicks(picks, sourceList) {
+    async function createSessionOnServer(mbti, picks) {
+      try {
+        const res = await fetch(API_BASE + '/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mbti, picks })
+        });
+        if (!res.ok) throw new Error('bad');
+        const j = await res.json();
+        return j.sessionId;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function postRatingToServer(sessionId, song, rating) {
+      try {
+        const res = await fetch(API_BASE + '/rate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, song, rating })
+        });
+        return res.ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // local fallback storage per session in-memory (not persisted across reloads)
+    const fallbackSessions = {};
+
+    function renderPicks(picks, sourceList, sessionId) {
       currentPicks = picks.slice();
       refreshUsed = false;
       const resultDiv = document.getElementById('result');
       resultDiv.innerHTML = '';
 
       const ul = document.createElement('ul');
-      const stored = ratingsStorage();
+
+      // ratings are per-session; if server used, ratings recorded there. We'll keep local current ratings until persisted.
+      if (!sessionId) sessionId = null;
+
+      if (sessionId && sessionId.startsWith('local-')) {
+        fallbackSessions[sessionId] = { picks: picks.slice(), ratings: {} };
+      }
 
       picks.forEach(song => {
         const li = document.createElement('li');
@@ -195,7 +224,7 @@
         const stars = document.createElement('span');
         stars.className = 'stars';
         const songId = getSongId(song);
-        const currentRating = stored[songId] || 0;
+        const currentRating = 0; // 每次新 session 评分重新开始
 
         for (let i = 1; i <= 5; i++) {
           const star = document.createElement('span');
@@ -203,26 +232,33 @@
           star.textContent = '★';
           star.dataset.value = i;
           star.style.userSelect = 'none';
-          star.addEventListener('click', () => {
+          star.addEventListener('click', async () => {
             const r = parseInt(star.dataset.value, 10);
-            const all = ratingsStorage();
-            all[songId] = r;
-            saveRatings(all);
-
+            // Update UI immediately
             const starElements = stars.querySelectorAll('.star');
             starElements.forEach(el => {
               const v = parseInt(el.dataset.value, 10);
               if (v <= r) el.classList.add('filled'); else el.classList.remove('filled');
             });
-
             label.textContent = `${r} / 5`;
+
+            // send to server if available, else keep in fallbackSessions
+            if (currentSessionId && !currentSessionId.startsWith('local-')) {
+              await postRatingToServer(currentSessionId, { title: song.title, artist: song.artist }, r);
+            } else {
+              // fallback
+              if (!currentSessionId) currentSessionId = 'local-' + Date.now();
+              if (!fallbackSessions[currentSessionId]) fallbackSessions[currentSessionId] = { picks: picks.slice(), ratings: {} };
+              fallbackSessions[currentSessionId].ratings[songId] = r;
+              document.getElementById('session').textContent = `Session: ${currentSessionId} (local)`;
+            }
           });
           stars.appendChild(star);
         }
 
         const label = document.createElement('span');
         label.className = 'rating-label';
-        label.textContent = currentRating ? `${currentRating} / 5` : '未评分';
+        label.textContent = '未评分';
 
         right.appendChild(a);
         right.appendChild(stars);
@@ -240,10 +276,8 @@
 
       const refreshBtn = document.createElement('button');
       refreshBtn.textContent = '刷新（换三首）';
-      refreshBtn.addEventListener('click', () => {
-        if (refreshUsed) {
-          return;
-        }
+      refreshBtn.addEventListener('click', async () => {
+        if (refreshUsed) return;
         refreshUsed = true;
         refreshBtn.disabled = true;
 
@@ -251,25 +285,40 @@
         let pool = sourceList.filter(song => !currentIds.has(getSongId(song)));
 
         let newPicks;
-        if (pool.length >= 3) {
-          newPicks = sample(pool, 3);
+        if (pool.length >= 3) newPicks = sample(pool, 3); else newPicks = sample(sourceList, 3);
+
+        // 当刷新时，我们需要创建新的 session，使评分重新开始
+        const mbti = document.getElementById('mbti').value.trim();
+        const newSessionId = await createSessionOnServer(mbti, newPicks);
+        if (newSessionId) {
+          currentSessionId = newSessionId;
+          document.getElementById('session').textContent = `Session: ${currentSessionId}`;
         } else {
-          newPicks = sample(sourceList, 3);
+          // fallback to local session
+          currentSessionId = 'local-' + Date.now();
+          document.getElementById('session').textContent = `Session: ${currentSessionId} (local)`;
         }
 
-        renderPicks(newPicks, sourceList);
+        renderPicks(newPicks, sourceList, currentSessionId);
       });
 
       const note = document.createElement('div');
       note.className = 'refresh-note';
-      note.textContent = '提示：每次推荐后可点击一次“刷新（换三首）”，且每首歌可单独评分。评分会保存在浏览器本地。';
+      note.textContent = '提示：每次刷新会开启新的评分会话（session），评分会重新开始。若已在运行后端，评分会被保存到服务器，终端可查询。';
 
       ctrl.appendChild(refreshBtn);
       resultDiv.appendChild(ctrl);
       resultDiv.appendChild(note);
+
+      // show session
+      if (sessionId) {
+        document.getElementById('session').textContent = `Session: ${sessionId}`;
+      } else {
+        document.getElementById('session').textContent = '';
+      }
     }
 
-    document.getElementById('recBtn').addEventListener('click', () => {
+    document.getElementById('recBtn').addEventListener('click', async () => {
       const mbti = document.getElementById('mbti').value.trim();
       const resultDiv = document.getElementById('result');
       resultDiv.innerHTML = '';
@@ -283,7 +332,16 @@
         return;
       }
       const picks = sample(list, 3);
-      renderPicks(picks, list);
+
+      // create session on server so ratings map to this session
+      const sessionId = await createSessionOnServer(mbti, picks);
+      if (sessionId) {
+        currentSessionId = sessionId;
+        renderPicks(picks, list, sessionId);
+      } else {
+        currentSessionId = 'local-' + Date.now();
+        renderPicks(picks, list, currentSessionId);
+      }
     });
   </script>
 </body>
